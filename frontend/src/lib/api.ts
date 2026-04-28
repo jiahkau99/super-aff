@@ -29,6 +29,7 @@ export type TTSProvider =
   | "elevenlabs"
   | "openai"
   | "gemini"
+  | "minimax"
   | "openai_compatible";
 
 export interface LLMCreds {

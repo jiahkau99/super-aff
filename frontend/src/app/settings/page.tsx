@@ -25,6 +25,7 @@ const TTS_PROVIDERS: { id: TTSProvider; label: string; needsBaseUrl: boolean }[]
   { id: "elevenlabs", label: "ElevenLabs", needsBaseUrl: false },
   { id: "openai", label: "OpenAI TTS", needsBaseUrl: false },
   { id: "gemini", label: "Google Gemini TTS", needsBaseUrl: false },
+  { id: "minimax", label: "MiniMax T2A (Indonesian)", needsBaseUrl: false },
   { id: "openai_compatible", label: "OpenAI-compatible (custom)", needsBaseUrl: true },
 ];
 
