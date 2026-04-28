@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --app-bg: #fff8f1;
+  --app-bg-accent-a: rgba(249, 115, 22, 0.12);
+  --app-bg-accent-b: rgba(244, 63, 94, 0.08);
+  --app-fg: #1a1208;
+  --grid-line: rgba(26, 18, 8, 0.05);
+  --brand: #ea580c;
+  --brand-2: #db2777;
+}
+
+.dark {
+  color-scheme: dark;
+  --app-bg: #0a0805;
+  --app-bg-accent-a: rgba(249, 115, 22, 0.22);
+  --app-bg-accent-b: rgba(244, 63, 94, 0.16);
+  --app-fg: #f7f1ea;
+  --grid-line: rgba(255, 255, 255, 0.04);
+}
+
+html,
+body {
+  background: var(--app-bg);
+  color: var(--app-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background:
+    radial-gradient(900px 600px at 90% -10%, var(--app-bg-accent-a), transparent 60%),
+    radial-gradient(700px 500px at 5% 110%, var(--app-bg-accent-b), transparent 60%),
+    var(--app-bg);
+  min-height: 100vh;
+}
+
+@theme inline {
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-fg);
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #ea580c, #db2777, #b45309);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn-primary {
+  background: linear-gradient(90deg, #ea580c, #db2777);
+  color: white;
+  font-weight: 600;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.625rem;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--app-fg);
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(26, 18, 8, 0.1);
+}
+.dark .btn-ghost {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(26, 18, 8, 0.08);
+  border-radius: 1rem;
+  padding: 1.5rem;
+}
+.dark .card {
+  background: rgba(20, 14, 10, 0.6);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.spinner {
+  border: 2px solid rgba(26, 18, 8, 0.15);
+  border-top-color: #ea580c;
+  border-radius: 9999px;
+  width: 14px;
+  height: 14px;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

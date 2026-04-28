@@ -1,0 +1,31 @@
+[project]
+name = "super-aff-backend"
+version = "0.1.0"
+description = "super-aff backend — auto Shopee affiliate content (slideshow + voice-over + caption + hashtag)."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "pydantic>=2.9",
+    "python-multipart>=0.0.12",
+    "pillow>=10.4",
+    "imageio-ffmpeg>=0.5.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

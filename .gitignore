@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+.vercel/
+.turbo/
+*.log
+.pnpm-store/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Runtime work files (generated MP4, audio, scrape cache)
+backend/runtime/
+backend/work/
+backend/output/
+
+# Misc
+*.tmp
+*.temp
