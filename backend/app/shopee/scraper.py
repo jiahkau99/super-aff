@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 
@@ -57,33 +58,46 @@ _I_PATH_RE = re.compile(r"\.(\d+)\.(\d+)(?:[/?#]|$)")
 _AFFILIATE_PATH_RE = re.compile(r"/[A-Za-z][A-Za-z0-9_-]*/(\d{4,})/(\d{4,})(?:[/?#]|$)")
 
 
+# Hosts that are exclusively short-link hosts (any path is a redirect target).
+_SHORTLINK_HOST_RE = re.compile(
+    r"^(?:s\.shopee\.(?:co\.id|com|sg|com\.my|tw|ph|vn|co\.th|com\.br)"
+    r"|id\.shp\.ee)$"
+)
+# Shopee marketplace hosts (with optional "www.") that use /r/<slug> as a
+# short-link redirect path.
+_SHOPEE_HOST_RE = re.compile(
+    r"^(?:www\.)?shopee\.(?:co\.id|com|sg|com\.my|tw|ph|vn|co\.th|com\.br)$"
+)
+
+
 def is_shopee_shortlink(url: str) -> bool:
     """Return True if the URL is a known Shopee short-link that needs to be
     resolved (HTTP redirect followed) before parsing.
 
-    Patterns must be domain-qualified to avoid SSRF — a bare ``/r/`` substring
-    would otherwise match arbitrary user-controlled URLs (e.g. reddit.com/r/...)
-    and cause :func:`resolve_shortlink` to fetch them.
+    Validation is hostname-based via :func:`urllib.parse.urlparse` — never
+    substring matching — to prevent SSRF. URLs like
+    ``https://news.shopee.evil.com/`` or ``https://android.shp.ee.evil.com/``
+    must NOT match, even though their hostnames contain literal substrings of a
+    shortlink host.
     """
-    s = url.strip().lower()
+    s = (url or "").strip()
     if not s:
         return False
-    return any(
-        h in s
-        for h in (
-            "s.shopee.",
-            "id.shp.ee",
-            "shopee.co.id/r/",
-            "shopee.com/r/",
-            "shopee.sg/r/",
-            "shopee.ph/r/",
-            "shopee.com.my/r/",
-            "shopee.vn/r/",
-            "shopee.co.th/r/",
-            "shopee.tw/r/",
-            "shopee.com.br/r/",
-        )
-    )
+    try:
+        parsed = urlparse(s)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    if _SHORTLINK_HOST_RE.match(host):
+        return True
+    # Marketplace-host /r/<slug> redirects (e.g. https://shopee.co.id/r/AbCdEf).
+    if _SHOPEE_HOST_RE.match(host) and parsed.path.startswith("/r/"):
+        return True
+    return False
 
 
 def parse_shopee_url(url: str) -> ShopeeIDs | None:
