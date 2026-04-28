@@ -18,6 +18,11 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 
+from app.providers import llm as llm_provider
+from app.providers import tts as tts_provider
+from app.schemas import LLMCreds, TTSCreds
+from app.shopee import scrape_shopee_product
+
 router = APIRouter(prefix="/api/util", tags=["util"])
 
 
@@ -191,3 +196,120 @@ async def fetch_image(req: FetchImageRequest) -> FetchImageResponse:
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"fetch failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Test-credentials endpoints used by the Settings page "Test" buttons.
+#
+# The frontend never persists credentials anywhere except localStorage, so we
+# accept the same BYOK payload the real LLM/TTS endpoints accept and just
+# return ok=True/False with a short message. No tokens, no logs, no storage.
+# ---------------------------------------------------------------------------
+
+
+class TestResult(BaseModel):
+    ok: bool
+    message: str = ""
+
+
+class TestLLMRequest(BaseModel):
+    creds: LLMCreds
+
+
+class TestTTSRequest(BaseModel):
+    creds: TTSCreds
+
+
+class TestShopeeRequest(BaseModel):
+    url: str = Field(
+        default="https://shopee.co.id/product/15/100",
+        description="Shopee URL to scrape; can be a real product link.",
+    )
+    cookie: str | None = None
+
+
+@router.post("/test-llm", response_model=TestResult)
+async def test_llm(req: TestLLMRequest) -> TestResult:
+    """Send a single trivial prompt to the configured LLM provider.
+
+    Used by the Settings page's "Test" button so the user can verify the
+    API key + model + (optional) base_url work *before* kicking off a full
+    generate flow that would otherwise fail late and waste their patience.
+    """
+
+    try:
+        reply = await llm_provider.chat_completion(
+            req.creds,
+            system="You are a connectivity probe. Reply with exactly: OK",
+            user="ping",
+            temperature=0.0,
+            max_tokens=10,
+            timeout=20.0,
+        )
+    except llm_provider.LLMError as exc:
+        return TestResult(ok=False, message=str(exc))
+    except httpx.HTTPError as exc:
+        return TestResult(ok=False, message=f"network error: {exc}")
+    except Exception as exc:  # pragma: no cover — safety net
+        return TestResult(ok=False, message=f"unexpected error: {exc!s}")
+
+    text = (reply or "").strip()
+    if not text:
+        return TestResult(ok=False, message="LLM membalas string kosong.")
+    return TestResult(ok=True, message=f"OK — model balas: {text[:80]!r}")
+
+
+@router.post("/test-tts", response_model=TestResult)
+async def test_tts(req: TestTTSRequest) -> TestResult:
+    """Generate a tiny clip with the configured TTS provider.
+
+    We just check that we got back a non-trivial number of bytes — most
+    providers won't return less than ~1 KB even for a one-word utterance.
+    """
+
+    try:
+        audio = await tts_provider.tts(
+            req.creds,
+            "Halo, ini test koneksi super-aff.",
+            timeout=30.0,
+        )
+    except tts_provider.TTSError as exc:
+        return TestResult(ok=False, message=str(exc))
+    except httpx.HTTPError as exc:
+        return TestResult(ok=False, message=f"network error: {exc}")
+    except Exception as exc:  # pragma: no cover — safety net
+        return TestResult(ok=False, message=f"unexpected error: {exc!s}")
+
+    if not audio or len(audio) < 1024:
+        return TestResult(
+            ok=False,
+            message=(
+                f"TTS balas {len(audio) if audio else 0} bytes — "
+                "kemungkinan respon error, bukan audio."
+            ),
+        )
+    return TestResult(ok=True, message=f"OK — audio {len(audio)} bytes diterima.")
+
+
+@router.post("/test-shopee", response_model=TestResult)
+async def test_shopee(req: TestShopeeRequest) -> TestResult:
+    """Verify the Shopee scraper (with optional cookie) succeeds end-to-end."""
+
+    try:
+        product = await scrape_shopee_product(req.url, cookie=req.cookie)
+    except ValueError as exc:
+        return TestResult(ok=False, message=str(exc))
+    except httpx.HTTPError as exc:
+        return TestResult(ok=False, message=str(exc))
+    except Exception as exc:  # pragma: no cover — safety net
+        return TestResult(ok=False, message=f"unexpected error: {exc!s}")
+
+    if not product.title:
+        return TestResult(
+            ok=False,
+            message="Shopee balas, tapi judul produk kosong (kemungkinan halaman challenge).",
+        )
+    return TestResult(
+        ok=True,
+        message=f"OK — judul: {product.title[:120]!r}",
+    )

@@ -27,7 +27,9 @@ from app.shopee import scrape_shopee_product
 router = APIRouter(prefix="/api/batch", tags=["batch"])
 
 
-async def _resolve_row(row, *, sem: asyncio.Semaphore) -> dict:
+async def _resolve_row(
+    row, *, sem: asyncio.Semaphore, cookie: str | None = None
+) -> dict:
     out: dict = {
         "url": row.url,
         "title": row.judul,
@@ -45,7 +47,7 @@ async def _resolve_row(row, *, sem: asyncio.Semaphore) -> dict:
 
     async with sem:
         try:
-            product = await scrape_shopee_product(row.url)
+            product = await scrape_shopee_product(row.url, cookie=cookie)
         except (ValueError, httpx.HTTPError) as exc:
             out["ok"] = False
             out["error"] = (
@@ -64,5 +66,7 @@ async def _resolve_row(row, *, sem: asyncio.Semaphore) -> dict:
 async def plan(req: BatchPlanRequest) -> BatchPlanResponse:
     """Resolve each CSV row into a normalized item ready for per-row processing."""
     sem = asyncio.Semaphore(4)  # cap parallel Shopee requests
-    results = await asyncio.gather(*(_resolve_row(r, sem=sem) for r in req.rows))
+    results = await asyncio.gather(
+        *(_resolve_row(r, sem=sem, cookie=req.cookie) for r in req.rows)
+    )
     return BatchPlanResponse(items=list(results))

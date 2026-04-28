@@ -32,7 +32,7 @@ SHOPEE_DOMAINS = (
 
 DEFAULT_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/126.0.0.0 Safari/537.36"
     ),
@@ -41,7 +41,29 @@ DEFAULT_HEADERS = {
     "Referer": "https://shopee.co.id/",
     "X-API-SOURCE": "pc",
     "X-Requested-With": "XMLHttpRequest",
+    # Browser fingerprint hints. These are tiny on their own but combined with
+    # an authenticated `Cookie` they make the request look more like a real
+    # tab and less like a stripped-down `requests` script.
+    "sec-ch-ua": '"Chromium";v="126", "Not.A/Brand";v="24", "Google Chrome";v="126"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
 }
+
+
+def _build_headers(cookie: str | None) -> dict[str, str]:
+    """Return DEFAULT_HEADERS optionally extended with a user-supplied Cookie.
+
+    Empty / whitespace-only cookies are ignored so callers can blindly pass
+    whatever was loaded from the frontend's localStorage without having to
+    branch on "is the user logged in".
+    """
+
+    if cookie and cookie.strip():
+        return {**DEFAULT_HEADERS, "Cookie": cookie.strip()}
+    return dict(DEFAULT_HEADERS)
 
 
 @dataclass(frozen=True)
@@ -140,16 +162,21 @@ def parse_shopee_url(url: str) -> ShopeeIDs | None:
     return None
 
 
-async def resolve_shortlink(url: str, *, timeout: float = 8.0) -> str:
+async def resolve_shortlink(
+    url: str, *, timeout: float = 8.0, cookie: str | None = None
+) -> str:
     """Follow redirects and return the final URL.
 
     Used so callers can pass a Shopee short-link (s.shopee.co.id/...) and we
     can still parse the canonical product URL it expands to.
     """
+    headers: dict[str, str] = {"User-Agent": DEFAULT_HEADERS["User-Agent"]}
+    if cookie and cookie.strip():
+        headers["Cookie"] = cookie.strip()
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=True,
-        headers={"User-Agent": DEFAULT_HEADERS["User-Agent"]},
+        headers=headers,
     ) as client:
         # Use a HEAD request first to be fast; fall back to GET if the host
         # rejects HEAD.
@@ -168,16 +195,26 @@ def _img_url(image_hash: str, domain: str) -> str:
     return f"https://down-id.img.susercontent.com/file/{image_hash}"
 
 
-async def scrape_shopee_product(url: str, *, timeout: float = 12.0) -> ShopeeProduct:
+async def scrape_shopee_product(
+    url: str, *, timeout: float = 12.0, cookie: str | None = None
+) -> ShopeeProduct:
     """Fetch product info from Shopee. Raises httpx.HTTPError on failure.
 
     If the URL is a short-link (s.shopee.co.id/...), it is resolved via a
     redirect-following HEAD request before parsing.
+
+    ``cookie`` is an optional raw ``Cookie:`` header value supplied by the
+    user (e.g. dumped from their browser DevTools). Shopee's anti-bot blocks
+    a lot of unauthenticated server-side traffic, so an authenticated cookie
+    drastically improves the success rate. Sent verbatim to ``shopee.co.id``
+    only — never logged, never persisted.
     """
     canonical_url = url
     if is_shopee_shortlink(url):
         try:
-            canonical_url = await resolve_shortlink(url, timeout=timeout)
+            canonical_url = await resolve_shortlink(
+                url, timeout=timeout, cookie=cookie
+            )
         except httpx.HTTPError as exc:
             raise ValueError(f"Gagal resolve shortlink {url!r}: {exc}") from exc
 
@@ -192,8 +229,12 @@ async def scrape_shopee_product(url: str, *, timeout: float = 12.0) -> ShopeePro
         f"?itemid={ids.item_id}&shopid={ids.shop_id}"
     )
 
+    headers = _build_headers(cookie)
+    # Adjust Referer to match the locale-specific marketplace.
+    headers["Referer"] = f"https://{ids.domain}/"
+
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        r = await client.get(api, headers=DEFAULT_HEADERS)
+        r = await client.get(api, headers=headers)
         if r.status_code in (401, 403, 429):
             raise httpx.HTTPError(
                 f"Shopee API menolak request (HTTP {r.status_code}). "

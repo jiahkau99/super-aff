@@ -95,11 +95,17 @@ export interface ScrapeResponse {
   error: string | null;
 }
 
-export async function scrapeShopee(productUrl: string): Promise<ScrapeResponse> {
+export async function scrapeShopee(
+  productUrl: string,
+  opts: { cookie?: string } = {},
+): Promise<ScrapeResponse> {
   const r = await fetch(url("/api/shopee/scrape"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: productUrl }),
+    body: JSON.stringify({
+      url: productUrl,
+      cookie: opts.cookie?.trim() || null,
+    }),
   });
   if (!r.ok) {
     const text = await r.text();
@@ -163,6 +169,7 @@ export async function composeSlideshow(payload: {
   audio_b64?: string | null;
   caption?: string;
   watermark_text?: string;
+  subtitle_text?: string;
   duration_per_image?: number;
   target_resolution?: [number, number];
 }): Promise<Blob> {
@@ -172,6 +179,7 @@ export async function composeSlideshow(payload: {
     body: JSON.stringify({
       caption: "",
       watermark_text: "",
+      subtitle_text: "",
       duration_per_image: 3.0,
       target_resolution: [720, 1280],
       ...payload,
@@ -196,15 +204,65 @@ export interface BatchPlanItem {
 
 export async function batchPlan(
   rows: { url: string; judul: string; deskripsi: string }[],
+  opts: { cookie?: string } = {},
 ): Promise<{ items: BatchPlanItem[] }> {
   const r = await fetch(url("/api/batch/plan"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rows }),
+    body: JSON.stringify({ rows, cookie: opts.cookie?.trim() || null }),
   });
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`Batch plan gagal (${r.status}): ${text}`);
+  }
+  return r.json();
+}
+
+// ---- Test connectivity --------------------------------------------------
+
+export interface TestResult {
+  ok: boolean;
+  message: string;
+}
+
+export async function testLlm(creds: LLMCreds): Promise<TestResult> {
+  const r = await fetch(url("/api/util/test-llm"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ creds }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    return { ok: false, message: `HTTP ${r.status}: ${text}` };
+  }
+  return r.json();
+}
+
+export async function testTts(creds: TTSCreds): Promise<TestResult> {
+  const r = await fetch(url("/api/util/test-tts"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ creds }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    return { ok: false, message: `HTTP ${r.status}: ${text}` };
+  }
+  return r.json();
+}
+
+export async function testShopee(
+  url_: string,
+  cookie?: string,
+): Promise<TestResult> {
+  const r = await fetch(url("/api/util/test-shopee"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url_, cookie: cookie?.trim() || null }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    return { ok: false, message: `HTTP ${r.status}: ${text}` };
   }
   return r.json();
 }

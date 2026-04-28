@@ -13,7 +13,12 @@ import {
   type GeneratedContent,
   type ShopeeProduct,
 } from "@/lib/api";
-import { loadLLMCreds, loadTTSCreds } from "@/lib/settings";
+import { BackButton } from "@/components/BackButton";
+import {
+  loadLLMCreds,
+  loadShopeeCookie,
+  loadTTSCreds,
+} from "@/lib/settings";
 
 type Stage =
   | "idle"
@@ -40,6 +45,7 @@ export default function SinglePage() {
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [watermark, setWatermark] = useState("");
   const [tone, setTone] = useState("santai-promosi");
+  const [burnSubtitle, setBurnSubtitle] = useState(true);
 
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +69,7 @@ export default function SinglePage() {
     setStage("scraping");
     setScrapedImages([]);
     try {
-      const r = await scrapeShopee(url);
+      const r = await scrapeShopee(url, { cookie: loadShopeeCookie() });
       if (!r.ok || !r.product) {
         setError(
           r.error ||
@@ -180,6 +186,7 @@ export default function SinglePage() {
         watermark_text: watermark,
         duration_per_image: 3.0,
         target_resolution: [720, 1280],
+        subtitle_text: burnSubtitle ? c.voiceover_script : "",
       });
       const vUrl = URL.createObjectURL(videoBlob);
       if (videoUrl) URL.revokeObjectURL(videoUrl);
@@ -199,6 +206,7 @@ export default function SinglePage() {
 
   return (
     <div className="space-y-6">
+      <BackButton />
       <header className="space-y-2">
         <h1 className="text-3xl font-bold">Single Product</h1>
         <p className="opacity-80 text-sm">
@@ -308,6 +316,14 @@ export default function SinglePage() {
             <option value="formal-elegan">Formal elegan</option>
           </select>
         </Field>
+        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={burnSubtitle}
+            onChange={(e) => setBurnSubtitle(e.target.checked)}
+          />
+          <span>Burn subtitle (hardsub) dari voice-over script ke video</span>
+        </label>
       </section>
 
       {/* Step 4: Generate */}

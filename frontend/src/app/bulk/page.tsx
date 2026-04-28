@@ -11,7 +11,12 @@ import {
   generateContent,
   generateVoiceover,
 } from "@/lib/api";
-import { loadLLMCreds, loadTTSCreds } from "@/lib/settings";
+import { BackButton } from "@/components/BackButton";
+import {
+  loadLLMCreds,
+  loadShopeeCookie,
+  loadTTSCreds,
+} from "@/lib/settings";
 
 interface BatchResult {
   index: number;
@@ -34,6 +39,7 @@ export default function BulkPage() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [watermark, setWatermark] = useState("");
   const [tone, setTone] = useState("santai-promosi");
+  const [burnSubtitle, setBurnSubtitle] = useState(true);
 
   const parsedRows = useMemo(() => parseCsv(csvText), [csvText]);
 
@@ -47,7 +53,7 @@ export default function BulkPage() {
     }
     setPlanning(true);
     try {
-      const r = await batchPlan(parsedRows);
+      const r = await batchPlan(parsedRows, { cookie: loadShopeeCookie() });
       setPlanItems(r.items);
     } catch (e) {
       setGlobalError(e instanceof Error ? e.message : String(e));
@@ -122,6 +128,7 @@ export default function BulkPage() {
           audio_b64: audioB64,
           caption: c.caption,
           watermark_text: watermark,
+          subtitle_text: burnSubtitle ? c.voiceover_script : "",
         });
         out.push({
           index: i,
@@ -148,6 +155,7 @@ export default function BulkPage() {
 
   return (
     <div className="space-y-6">
+      <BackButton />
       <header className="space-y-2">
         <h1 className="text-3xl font-bold">Bulk CSV</h1>
         <p className="opacity-80 text-sm">
@@ -242,6 +250,14 @@ export default function BulkPage() {
             <option value="formal-elegan">Formal elegan</option>
           </select>
         </Field>
+        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={burnSubtitle}
+            onChange={(e) => setBurnSubtitle(e.target.checked)}
+          />
+          <span>Burn subtitle (hardsub) dari voice-over script ke video</span>
+        </label>
       </section>
 
       <section className="card space-y-3">
