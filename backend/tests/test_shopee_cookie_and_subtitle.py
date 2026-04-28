@@ -312,6 +312,17 @@ def test_format_srt_timestamp_milliseconds():
     assert slideshow_mod._format_srt_timestamp(3661.001) == "01:01:01,001"
 
 
+def test_format_srt_timestamp_carries_rounding_to_minute_and_hour():
+    """Regression test: rounding 59.9999 -> 60.000 must propagate up."""
+
+    # 59.9999 used to emit "00:00:60,000" (invalid SRT — libass skips it).
+    assert slideshow_mod._format_srt_timestamp(59.9999) == "00:01:00,000"
+    # 119.9999 sits on a minute boundary too.
+    assert slideshow_mod._format_srt_timestamp(119.9999) == "00:02:00,000"
+    # 3599.9999 must roll all the way up to the next hour.
+    assert slideshow_mod._format_srt_timestamp(3599.9999) == "01:00:00,000"
+
+
 def test_build_srt_distributes_by_char_weight():
     segs = ["short", "a much longer second sentence here"]
     srt = slideshow_mod._build_srt(segs, total_duration=10.0)

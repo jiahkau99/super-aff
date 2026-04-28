@@ -161,9 +161,18 @@ def _format_srt_timestamp(seconds: float) -> str:
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     ms = int(round((seconds - int(seconds)) * 1000))
-    if ms == 1000:  # rounding edge
+    # Propagate rounding carry up through s -> m -> h so we never emit
+    # invalid timestamps like "00:00:60,000" or "00:59:60,000" (libass
+    # silently skips those cues).
+    if ms == 1000:
         s += 1
         ms = 0
+    if s == 60:
+        m += 1
+        s = 0
+    if m == 60:
+        h += 1
+        m = 0
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
