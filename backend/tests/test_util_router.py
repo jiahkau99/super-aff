@@ -219,3 +219,212 @@ def test_fetch_image_rejects_dns_failure(monkeypatch):
         json={"url": "https://does-not-exist.example/foo.png"},
     )
     assert r.status_code == 400
+
+
+# ---- Redirect handling --------------------------------------------------
+
+
+def _multi_dns(monkeypatch, mapping: dict[str, str]) -> None:
+    """Map each hostname to a specific resolved IP for SSRF validation."""
+
+    def fake_getaddrinfo(host, *_args, **_kwargs):
+        ip = mapping.get(host)
+        if ip is None:
+            raise socket.gaierror(f"unknown host {host}")
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 0, "", (ip, 0))]
+
+    monkeypatch.setattr(util_module.socket, "getaddrinfo", fake_getaddrinfo)
+
+
+def test_fetch_image_follows_safe_redirect(monkeypatch):
+    """Public → public 302 must be followed and the final body returned."""
+
+    raw = b"\x89PNG\r\n\x1a\nfinal payload"
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(str(request.url))
+        if request.url.host == "first.example":
+            return httpx.Response(
+                302,
+                headers={"location": "https://second.example/final.png"},
+            )
+        assert request.url.host == "second.example"
+        return httpx.Response(
+            200, content=raw, headers={"content-type": "image/png"}
+        )
+
+    _multi_dns(monkeypatch, {"first.example": "1.2.3.4", "second.example": "5.6.7.8"})
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://first.example/img.png"},
+    )
+    assert r.status_code == 200
+    assert r.json()["image_b64"] == base64.b64encode(raw).decode("ascii")
+    # Both hops were issued (proving redirects ARE followed when public).
+    assert any("first.example" in u for u in seen_paths)
+    assert any("second.example" in u for u in seen_paths)
+
+
+def test_fetch_image_rejects_redirect_to_private_ip(monkeypatch):
+    """Public → 169.254.169.254 (cloud metadata) MUST be refused.
+
+    This is the specific bypass Devin Review flagged on PR #2.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "evil.example":
+            return httpx.Response(
+                302,
+                headers={
+                    "location": (
+                        "http://169.254.169.254/latest/meta-data/"
+                        "iam/security-credentials/"
+                    )
+                },
+            )
+        # If the redirect was followed, the test must fail loudly rather than
+        # silently let metadata leak.
+        raise AssertionError(
+            f"redirect to internal target was NOT blocked: {request.url}"
+        )
+
+    _multi_dns(
+        monkeypatch,
+        {
+            "evil.example": "1.2.3.4",
+            "169.254.169.254": "169.254.169.254",
+        },
+    )
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://evil.example/bait.png"},
+    )
+    assert r.status_code == 400
+    assert "non-public" in r.json()["detail"]
+
+
+def test_fetch_image_rejects_redirect_to_loopback(monkeypatch):
+    """Public → 127.0.0.1:<other-port> must also be refused."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "evil.example":
+            return httpx.Response(
+                302,
+                headers={"location": "http://127.0.0.1:8000/secret"},
+            )
+        raise AssertionError(
+            f"redirect to loopback was NOT blocked: {request.url}"
+        )
+
+    _multi_dns(
+        monkeypatch,
+        {"evil.example": "1.2.3.4", "127.0.0.1": "127.0.0.1"},
+    )
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://evil.example/bait.png"},
+    )
+    assert r.status_code == 400
+
+
+def test_fetch_image_rejects_redirect_chain_terminating_in_private_ip(monkeypatch):
+    """A multi-hop chain still gets validated at every hop."""
+
+    locations = {
+        "a.example": "https://b.example/",
+        "b.example": "http://10.0.0.1/secret",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host in {"a.example", "b.example"}:
+            return httpx.Response(302, headers={"location": locations[host]})
+        raise AssertionError(
+            f"redirect chain reached private target: {request.url}"
+        )
+
+    _multi_dns(
+        monkeypatch,
+        {
+            "a.example": "1.2.3.4",
+            "b.example": "5.6.7.8",
+            "10.0.0.1": "10.0.0.1",
+        },
+    )
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://a.example/start.png"},
+    )
+    assert r.status_code == 400
+
+
+def test_fetch_image_caps_redirect_count(monkeypatch):
+    """Endless public→public bouncing eventually returns 502."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Bounce forever between two public hosts.
+        other = "b.example" if request.url.host == "a.example" else "a.example"
+        return httpx.Response(302, headers={"location": f"https://{other}/loop"})
+
+    _multi_dns(
+        monkeypatch,
+        {"a.example": "1.2.3.4", "b.example": "5.6.7.8"},
+    )
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://a.example/start.png"},
+    )
+    assert r.status_code == 502
+    assert "too many redirects" in r.json()["detail"]
+
+
+def test_fetch_image_handles_relative_redirect(monkeypatch):
+    """Relative `Location` headers must resolve against the current URL."""
+
+    raw = b"final"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start.png":
+            # Relative redirect — same host, different path.
+            return httpx.Response(302, headers={"location": "/final.png"})
+        assert request.url.path == "/final.png"
+        return httpx.Response(200, content=raw, headers={"content-type": "image/png"})
+
+    _multi_dns(monkeypatch, {"only.example": "1.2.3.4"})
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://only.example/start.png"},
+    )
+    assert r.status_code == 200
+    assert r.json()["image_b64"] == base64.b64encode(raw).decode("ascii")
+
+
+def test_fetch_image_rejects_redirect_without_location(monkeypatch):
+    """A 302 with no Location header is malformed — return 502, not crash."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302)  # no Location header
+
+    _multi_dns(monkeypatch, {"only.example": "1.2.3.4"})
+    _patch_async_client(monkeypatch, handler)
+    client = TestClient(app)
+    r = client.post(
+        "/api/util/fetch-image",
+        json={"url": "https://only.example/x.png"},
+    )
+    assert r.status_code == 502
+    assert "without Location" in r.json()["detail"]
