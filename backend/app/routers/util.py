@@ -12,7 +12,7 @@ from __future__ import annotations
 import base64
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -35,6 +35,8 @@ class FetchImageResponse(BaseModel):
 # multi-GB upstream response cannot exhaust memory before the check runs.
 _MAX_BYTES = 12 * 1024 * 1024  # 12 MB
 _STREAM_CHUNK = 64 * 1024
+# Bound the manual redirect loop so a redirect-bounce attack can't burn CPU.
+_MAX_REDIRECTS = 5
 
 
 @router.get("/healthz")
@@ -108,9 +110,6 @@ async def fetch_image(req: FetchImageRequest) -> FetchImageResponse:
     permissive CORS headers, and would also be blocked by the Tauri CSP).
     """
 
-    target = str(req.url)
-    _validate_public_target(target)
-
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -119,46 +118,76 @@ async def fetch_image(req: FetchImageRequest) -> FetchImageResponse:
         ),
     }
 
+    current = str(req.url)
+
     try:
+        # Disable httpx's automatic redirect handling: we MUST re-validate the
+        # SSRF guard against every Location header. Otherwise an attacker on a
+        # public IP can return a 302 to e.g. http://169.254.169.254/... and
+        # silently exfiltrate cloud metadata.
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=httpx.Timeout(20.0, connect=10.0),
         ) as client:
-            async with client.stream("GET", target, headers=headers) as r:
-                if r.status_code != 200:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"upstream HTTP {r.status_code} fetching {target}",
-                    )
-
-                # Cheap pre-check; some upstreams send accurate Content-Length.
-                cl = r.headers.get("content-length")
-                if cl is not None:
-                    try:
-                        if int(cl) > _MAX_BYTES:
+            for _hop in range(_MAX_REDIRECTS + 1):
+                _validate_public_target(current)
+                async with client.stream("GET", current, headers=headers) as r:
+                    if 300 <= r.status_code < 400:
+                        loc = r.headers.get("location")
+                        if not loc:
                             raise HTTPException(
-                                status_code=413,
+                                status_code=502,
                                 detail=(
-                                    f"image too large ({cl} bytes declared, "
-                                    f"max {_MAX_BYTES})"
+                                    f"upstream {r.status_code} without Location"
                                 ),
                             )
-                    except ValueError:
-                        pass  # ignore malformed Content-Length
+                        current = urljoin(current, loc)
+                        continue  # validate-then-fetch the next hop
 
-                content_type = r.headers.get("content-type")
-                buf = bytearray()
-                async for chunk in r.aiter_bytes(chunk_size=_STREAM_CHUNK):
-                    if len(buf) + len(chunk) > _MAX_BYTES:
+                    if r.status_code != 200:
                         raise HTTPException(
-                            status_code=413,
-                            detail=f"image too large (>{_MAX_BYTES} bytes)",
+                            status_code=502,
+                            detail=(
+                                f"upstream HTTP {r.status_code} fetching "
+                                f"{current}"
+                            ),
                         )
-                    buf.extend(chunk)
+
+                    # Cheap pre-check; some upstreams send accurate
+                    # Content-Length.
+                    cl = r.headers.get("content-length")
+                    if cl is not None:
+                        try:
+                            if int(cl) > _MAX_BYTES:
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=(
+                                        f"image too large ({cl} bytes declared,"
+                                        f" max {_MAX_BYTES})"
+                                    ),
+                                )
+                        except ValueError:
+                            pass  # ignore malformed Content-Length
+
+                    content_type = r.headers.get("content-type")
+                    buf = bytearray()
+                    async for chunk in r.aiter_bytes(chunk_size=_STREAM_CHUNK):
+                        if len(buf) + len(chunk) > _MAX_BYTES:
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"image too large (>{_MAX_BYTES} bytes)",
+                            )
+                        buf.extend(chunk)
+
+                    return FetchImageResponse(
+                        image_b64=base64.b64encode(bytes(buf)).decode("ascii"),
+                        content_type=content_type,
+                    )
+
+            # Loop fell through → exhausted redirect budget.
+            raise HTTPException(
+                status_code=502,
+                detail=f"too many redirects (>{_MAX_REDIRECTS})",
+            )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"fetch failed: {exc}") from exc
-
-    return FetchImageResponse(
-        image_b64=base64.b64encode(bytes(buf)).decode("ascii"),
-        content_type=content_type,
-    )
