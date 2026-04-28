@@ -36,7 +36,7 @@ Bring Your Own Key (BYOK) studio yang ngubah link produk Shopee jadi paket konte
 
 Aplikasi desktop Windows (Tauri) yang tinggal di-double-click. Tidak perlu install Python, Node, atau Docker — semua sudah di-bundle.
 
-1. Buka halaman **[Releases](https://github.com/andelaiceee-code/super-aff/releases)** di repo ini.
+1. Buka halaman **[Releases](https://github.com/jiahkau99/super-aff/releases)** di repo ini.
 2. Download installer terbaru: **`super-aff_<versi>_x64-setup.exe`**.
 3. Jalankan installer → klik **Install** → buka **super-aff** dari Start Menu.
 4. Aplikasi terbuka dalam window sendiri (bukan browser). Backend FastAPI jalan otomatis di `127.0.0.1:8765` di belakang layar.
@@ -58,7 +58,7 @@ Kalau Anda ingin compile sendiri dari source, lihat bagian [Build .exe sendiri (
 Kalau punya Docker Desktop / Docker Engine, ini cara tercepat:
 
 ```bash
-git clone https://github.com/andelaiceee-code/super-aff.git
+git clone https://github.com/jiahkau99/super-aff.git
 cd super-aff
 docker compose up -d --build
 ```
@@ -117,7 +117,7 @@ npm install -g pnpm
 ### 2. Clone repo
 
 ```bash
-git clone https://github.com/andelaiceee-code/super-aff.git
+git clone https://github.com/jiahkau99/super-aff.git
 cd super-aff
 ```
 
