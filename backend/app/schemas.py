@@ -18,6 +18,7 @@ TTSProvider = Literal[
     "elevenlabs",
     "openai",
     "gemini",
+    "minimax",
     "openai_compatible",
 ]
 

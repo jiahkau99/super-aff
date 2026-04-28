@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import binascii
+
 import httpx
 
 from app.schemas import TTSCreds
@@ -10,6 +12,7 @@ DEFAULT_MODELS: dict[str, str] = {
     "elevenlabs": "eleven_multilingual_v2",
     "openai": "gpt-4o-mini-tts",
     "gemini": "gemini-2.5-flash-preview-tts",
+    "minimax": "speech-2.8-hd",
     "openai_compatible": "tts-1",
 }
 
@@ -17,6 +20,7 @@ DEFAULT_VOICES: dict[str, str] = {
     "elevenlabs": "21m00Tcm4TlvDq8ikWAM",  # "Rachel"
     "openai": "alloy",
     "gemini": "Kore",
+    "minimax": "Indonesian_SweetGirl",
     "openai_compatible": "alloy",
 }
 
@@ -24,6 +28,7 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "elevenlabs": "https://api.elevenlabs.io/v1",
     "openai": "https://api.openai.com/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "minimax": "https://api.minimax.io/v1",
     "openai_compatible": "",
 }
 
@@ -45,6 +50,8 @@ async def tts(creds: TTSCreds, text: str, *, timeout: float = 90.0) -> bytes:
         return await _elevenlabs(creds.api_key, base_url, voice, model, text, timeout)
     if creds.provider == "gemini":
         return await _gemini_tts(creds.api_key, base_url, model, voice, text, timeout)
+    if creds.provider == "minimax":
+        return await _minimax_tts(creds.api_key, base_url, model, voice, text, timeout)
     # openai + openai_compatible
     if not base_url:
         raise TTSError(
@@ -117,3 +124,54 @@ async def _gemini_tts(
     except (KeyError, IndexError, TypeError) as exc:
         raise TTSError(f"Format respon Gemini TTS tidak terduga: {data!r:.500}") from exc
     return base64.b64decode(b64)
+
+
+async def _minimax_tts(
+    api_key: str, base_url: str, model: str, voice: str, text: str, timeout: float
+) -> bytes:
+    """MiniMax T2A v2 (https://api.minimax.io/v1/t2a_v2).
+
+    Returns hex-encoded MP3 bytes inside ``data.audio``. We always request
+    non-streaming MP3 at 32 kHz / 128 kbps mono so the slideshow composer can
+    consume it directly.
+    """
+    url = f"{base_url}/t2a_v2"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "text": text,
+        "stream": False,
+        "language_boost": "Indonesian",
+        "voice_setting": {
+            "voice_id": voice,
+            "speed": 1,
+            "vol": 1,
+            "pitch": 0,
+        },
+        "audio_setting": {
+            "sample_rate": 32000,
+            "bitrate": 128000,
+            "format": "mp3",
+            "channel": 1,
+        },
+    }
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(url, json=payload, headers=headers)
+        if r.status_code >= 400:
+            raise TTSError(f"MiniMax TTS error {r.status_code}: {r.text[:500]}")
+        data = r.json()
+    base = data.get("base_resp") or {}
+    if base.get("status_code") not in (0, None):
+        raise TTSError(
+            f"MiniMax TTS gagal ({base.get('status_code')}): {base.get('status_msg')}"
+        )
+    audio_hex = (data.get("data") or {}).get("audio") or ""
+    if not audio_hex:
+        raise TTSError(f"Format respon MiniMax TTS tidak terduga: {data!r:.500}")
+    try:
+        return binascii.unhexlify(audio_hex)
+    except (binascii.Error, ValueError) as exc:
+        raise TTSError(f"Audio MiniMax bukan hex valid: {exc!s}") from exc
