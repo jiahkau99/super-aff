@@ -1,0 +1,116 @@
+name: Release Windows installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional release tag (leave blank to upload only as workflow artifact)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows .exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.toml') }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      # ---------- Frontend (static export) ----------
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend (static export)
+        working-directory: frontend
+        run: pnpm build
+
+      # ---------- Backend (PyInstaller sidecar) ----------
+      - name: Sync backend deps (incl. pyinstaller)
+        working-directory: backend
+        run: uv sync --group package --group dev
+
+      - name: Build backend sidecar exe
+        working-directory: backend
+        run: uv run pyinstaller pyinstaller.spec --noconfirm --clean
+
+      - name: Stage backend sidecar for Tauri
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          Copy-Item backend/dist/super-aff-backend.exe src-tauri/binaries/super-aff-backend-x86_64-pc-windows-msvc.exe -Force
+          Get-ChildItem src-tauri/binaries
+
+      # ---------- Tauri build ----------
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build Tauri (NSIS installer)
+        working-directory: src-tauri
+        run: cargo tauri build --target x86_64-pc-windows-msvc
+
+      - name: Locate installer
+        id: installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Recurse -Filter '*.exe' -Path 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis' | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "no installer produced"
+            exit 1
+          }
+          Write-Host "installer=$($installer.FullName)"
+          "path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "name=$($installer.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: super-aff-windows-installer
+          path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.installer.outputs.path }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

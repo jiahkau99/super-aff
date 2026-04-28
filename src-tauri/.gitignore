@@ -1,0 +1,8 @@
+# Tauri build artifacts
+/target
+/gen
+/binaries/super-aff-backend*
+
+# Cargo
+**/*.rs.bk
+Cargo.lock
