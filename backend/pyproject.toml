@@ -19,6 +19,9 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
 ]
+package = [
+    "pyinstaller>=6.10",
+]
 
 [tool.ruff]
 line-length = 100

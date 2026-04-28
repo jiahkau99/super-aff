@@ -13,6 +13,7 @@ Bring Your Own Key (BYOK) studio yang ngubah link produk Shopee jadi paket konte
 
 ## Daftar isi
 
+- [Install Windows (.exe — paling gampang untuk user)](#install-windows-exe--paling-gampang-untuk-user)
 - [Quick start (Docker — paling gampang)](#quick-start-docker--paling-gampang)
 - [Run di PC tanpa Docker (Windows / macOS / Linux)](#run-di-pc-tanpa-docker-windows--macos--linux)
   - [1. Prerequisites](#1-prerequisites)
@@ -28,6 +29,27 @@ Bring Your Own Key (BYOK) studio yang ngubah link produk Shopee jadi paket konte
 - [Tech stack](#tech-stack)
 - [Struktur folder](#struktur-folder)
 - [Catatan etika & legal](#catatan-etika--legal)
+
+---
+
+## Install Windows (.exe — paling gampang untuk user)
+
+Aplikasi desktop Windows (Tauri) yang tinggal di-double-click. Tidak perlu install Python, Node, atau Docker — semua sudah di-bundle.
+
+1. Buka halaman **[Releases](https://github.com/andelaiceee-code/super-aff/releases)** di repo ini.
+2. Download installer terbaru: **`super-aff_<versi>_x64-setup.exe`**.
+3. Jalankan installer → klik **Install** → buka **super-aff** dari Start Menu.
+4. Aplikasi terbuka dalam window sendiri (bukan browser). Backend FastAPI jalan otomatis di `127.0.0.1:8765` di belakang layar.
+5. Pertama kali, buka tab **Settings** → tempel API key LLM (wajib) + TTS (opsional). Key disimpan **lokal di komputer Anda**, tidak pernah dikirim ke server kami.
+
+**Kenapa pakai .exe lokal?** Saat aplikasi jalan di PC Anda, request scrape Shopee keluar dari **IP rumah/kantor Anda** (bukan IP server cloud). Shopee jauh lebih jarang block IP residential dibanding IP datacenter — jadi success rate scrape-nya naik signifikan.
+
+**Catatan:**
+- Hanya Windows 10/11 64-bit. macOS / Linux build belum tersedia.
+- Pertama kali run mungkin Windows SmartScreen warning (installer belum signed). Klik **More info → Run anyway**.
+- Untuk uninstall: Settings → Apps → super-aff → Uninstall.
+
+Kalau Anda ingin compile sendiri dari source, lihat bagian [Build .exe sendiri (untuk developer)](#build-exe-sendiri-untuk-developer) di bawah.
 
 ---
 
@@ -282,18 +304,62 @@ Beberapa model reasoning (MiniMax-M2.x, DeepSeek-R1, dll.) emit reasoning trace 
 
 ---
 
+## Build .exe sendiri (untuk developer)
+
+Yang dibutuhkan di mesin developer (Windows direkomendasikan, atau pakai GitHub Actions runner `windows-latest`):
+
+- **Rust** stable + target `x86_64-pc-windows-msvc` (`rustup target add x86_64-pc-windows-msvc`)
+- **Node.js 20 + pnpm 9**
+- **Python 3.12 + [uv](https://docs.astral.sh/uv/)**
+- **WebView2** (sudah pre-installed di Windows 11)
+- **Tauri CLI** v2: `cargo install tauri-cli --version "^2.0" --locked`
+
+```bash
+# 1. Build frontend static export
+cd frontend
+pnpm install --frozen-lockfile
+pnpm build      # → frontend/out/
+
+# 2. Build backend sidecar exe (PyInstaller)
+cd ../backend
+uv sync --group package
+uv run pyinstaller pyinstaller.spec --noconfirm --clean
+# → backend/dist/super-aff-backend.exe
+
+# 3. Stage sidecar untuk Tauri (rename ke target-triple)
+cd ..
+cp backend/dist/super-aff-backend.exe \
+   src-tauri/binaries/super-aff-backend-x86_64-pc-windows-msvc.exe
+
+# 4. Build installer NSIS via Tauri
+cd src-tauri
+cargo tauri build --target x86_64-pc-windows-msvc
+# → src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/super-aff_<ver>_x64-setup.exe
+```
+
+Atau biarkan **GitHub Actions** yang build: tag commit `vX.Y.Z` lalu push tag — workflow `release-windows.yml` otomatis build di runner `windows-latest` dan upload installer ke Releases page.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## Tech stack
 
-- `frontend/` — Next.js 16 (App Router) + Tailwind v4 + TypeScript
+- `frontend/` — Next.js 16 (App Router) + Tailwind v4 + TypeScript, static export untuk Tauri
 - `backend/` — FastAPI + httpx + Pydantic v2
+- `src-tauri/` — Tauri 2 desktop shell (Rust), spawn FastAPI sidecar lewat `tauri-plugin-shell`
 - `imageio-ffmpeg` — bundled ffmpeg untuk komposisi MP4 (Ken Burns zoom-pan + watermark + voice-over mux)
-- Docker Compose — Caddy reverse proxy + FastAPI backend
+- Docker Compose — Caddy reverse proxy + FastAPI backend (mode server)
+- PyInstaller — bundle backend FastAPI jadi single .exe (mode desktop Tauri)
 
 ## Struktur folder
 
 ```
 super-aff/
-├── backend/                  FastAPI server (port 8000)
+├── backend/                  FastAPI server (port 8000 server / 8765 desktop)
+│   ├── run_server.py         Entry point untuk PyInstaller (Tauri sidecar)
+│   ├── pyinstaller.spec      Build spec yang bundle imageio-ffmpeg + uvicorn deps
 │   └── app/
 │       ├── main.py
 │       ├── routers/          /api/shopee, /api/content, /api/voiceover, /api/compose, /api/batch
@@ -302,11 +368,20 @@ super-aff/
 │       │   └── tts.py        ElevenLabs / OpenAI / Gemini / MiniMax / OpenAI-compat
 │       ├── shopee/           Shopee URL parser + scraper (handle shortlink + affiliate URL)
 │       └── compose/          ffmpeg slideshow pipeline
-├── frontend/                 Next.js 16 (port 3000 dev / 8081 docker)
+├── frontend/                 Next.js 16 (port 3000 dev / 8081 docker / static-export utk Tauri)
+│   ├── .env.production       NEXT_PUBLIC_API_BASE=http://127.0.0.1:8765 (untuk build Tauri)
 │   └── src/
 │       ├── app/              /, /single, /bulk, /settings
 │       ├── components/
 │       └── lib/              api.ts (fetch helpers), settings.ts (localStorage), csv.ts
+├── src-tauri/                Tauri 2 desktop shell
+│   ├── src/lib.rs            spawn backend sidecar + window setup
+│   ├── tauri.conf.json       window/bundle config (NSIS installer)
+│   ├── capabilities/         Tauri permissions (sidecar exec, dialog, process)
+│   └── icons/
+├── .github/workflows/
+│   ├── ci.yml                lint + test pada PR
+│   └── release-windows.yml   build NSIS installer di runner windows-latest
 ├── docker-compose.yml
 └── .env.example
 ```
