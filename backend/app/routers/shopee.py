@@ -17,7 +17,7 @@ async def scrape(req: ScrapeRequest) -> ScrapeResponse:
     so the frontend can offer a manual-input fallback.
     """
     try:
-        product = await scrape_shopee_product(req.url)
+        product = await scrape_shopee_product(req.url, cookie=req.cookie)
         return ScrapeResponse(ok=True, product=product)
     except ValueError as exc:
         return ScrapeResponse(ok=False, error=str(exc))

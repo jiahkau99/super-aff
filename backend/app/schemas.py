@@ -60,6 +60,15 @@ class ShopeeProduct(BaseModel):
 
 class ScrapeRequest(BaseModel):
     url: str
+    cookie: str | None = Field(
+        default=None,
+        description=(
+            "Optional raw `Cookie:` header (e.g. `SPC_EC=...; SPC_F=...`) "
+            "from the user's logged-in Shopee browser session, used to "
+            "bypass anti-bot blocks on server-side scraping. Sent verbatim "
+            "to shopee.co.id only — never persisted, never logged."
+        ),
+    )
 
 
 class ScrapeResponse(BaseModel):
@@ -104,6 +113,7 @@ class ComposeSlideshowRequest(BaseModel):
     audio_b64: str | None = None  # base64 mp3, optional
     caption: str = ""
     watermark_text: str = ""
+    subtitle_text: str = ""  # if non-empty, split + burn-in as hardsub
     duration_per_image: float = 3.0  # seconds (used if no audio)
     target_resolution: tuple[int, int] = (720, 1280)
 
@@ -122,6 +132,10 @@ class BatchCSVRow(BaseModel):
 
 class BatchPlanRequest(BaseModel):
     rows: list[BatchCSVRow]
+    cookie: str | None = Field(
+        default=None,
+        description="Same as ScrapeRequest.cookie; applied to every row.",
+    )
 
 
 class BatchPlanResponse(BaseModel):

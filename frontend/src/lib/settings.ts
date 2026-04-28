@@ -6,6 +6,7 @@ import type { LLMCreds, TTSCreds } from "./api";
 
 const LLM_KEY = "super-aff:llm";
 const TTS_KEY = "super-aff:tts";
+const SHOPEE_COOKIE_KEY = "super-aff:shopee-cookie";
 
 export function loadLLMCreds(): LLMCreds | null {
   if (typeof window === "undefined") return null;
@@ -43,4 +44,25 @@ export function saveTTSCreds(creds: TTSCreds): void {
 
 export function clearTTSCreds(): void {
   localStorage.removeItem(TTS_KEY);
+}
+
+// Raw `Cookie:` header value pasted by the user from a logged-in Shopee
+// browser session. Used by the Shopee scraper to bypass anti-bot blocks.
+// Stored ONLY in localStorage; never synced anywhere.
+export function loadShopeeCookie(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(SHOPEE_COOKIE_KEY) || "";
+}
+
+export function saveShopeeCookie(cookie: string): void {
+  const trimmed = cookie.trim();
+  if (trimmed) {
+    localStorage.setItem(SHOPEE_COOKIE_KEY, trimmed);
+  } else {
+    localStorage.removeItem(SHOPEE_COOKIE_KEY);
+  }
+}
+
+export function clearShopeeCookie(): void {
+  localStorage.removeItem(SHOPEE_COOKIE_KEY);
 }

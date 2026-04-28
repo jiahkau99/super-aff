@@ -57,6 +57,7 @@ async def compose_slideshow_endpoint(req: ComposeSlideshowRequest) -> Response:
                 target_resolution=req.target_resolution,
                 duration_per_image=req.duration_per_image,
                 watermark_text=req.watermark_text,
+                subtitle_text=req.subtitle_text,
             )
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(500, str(exc)) from exc

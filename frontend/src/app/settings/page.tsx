@@ -1,13 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import type { LLMCreds, LLMProvider, TTSCreds, TTSProvider } from "@/lib/api";
+import {
+  testLlm,
+  testShopee,
+  testTts,
+  type LLMCreds,
+  type LLMProvider,
+  type TTSCreds,
+  type TTSProvider,
+} from "@/lib/api";
+import { BackButton } from "@/components/BackButton";
 import {
   clearLLMCreds,
+  clearShopeeCookie,
   clearTTSCreds,
   loadLLMCreds,
+  loadShopeeCookie,
   loadTTSCreds,
   saveLLMCreds,
+  saveShopeeCookie,
   saveTTSCreds,
 } from "@/lib/settings";
 
@@ -29,6 +41,14 @@ const TTS_PROVIDERS: { id: TTSProvider; label: string; needsBaseUrl: boolean }[]
   { id: "openai_compatible", label: "OpenAI-compatible (custom)", needsBaseUrl: true },
 ];
 
+interface TestState {
+  loading: boolean;
+  ok: boolean | null;
+  message: string;
+}
+
+const IDLE_TEST: TestState = { loading: false, ok: null, message: "" };
+
 export default function SettingsPage() {
   const [llm, setLLM] = useState<LLMCreds>(
     () =>
@@ -49,7 +69,12 @@ export default function SettingsPage() {
         base_url: "",
       },
   );
+  const [shopeeCookie, setShopeeCookie] = useState<string>(() => loadShopeeCookie());
   const [savedNote, setSavedNote] = useState<string | null>(null);
+
+  const [llmTest, setLlmTest] = useState<TestState>(IDLE_TEST);
+  const [ttsTest, setTtsTest] = useState<TestState>(IDLE_TEST);
+  const [shopeeTest, setShopeeTest] = useState<TestState>(IDLE_TEST);
 
   const llmCfg = LLM_PROVIDERS.find((p) => p.id === llm.provider)!;
   const ttsCfg = TTS_PROVIDERS.find((p) => p.id === tts.provider)!;
@@ -57,6 +82,7 @@ export default function SettingsPage() {
   function handleSave() {
     if (llm.api_key.trim()) saveLLMCreds(llm);
     if (tts.api_key.trim()) saveTTSCreds(tts);
+    saveShopeeCookie(shopeeCookie);
     setSavedNote("Tersimpan di browser.");
     setTimeout(() => setSavedNote(null), 2500);
   }
@@ -64,32 +90,87 @@ export default function SettingsPage() {
   function handleClear() {
     clearLLMCreds();
     clearTTSCreds();
+    clearShopeeCookie();
     setLLM({ provider: "openai", api_key: "", model: "", base_url: "" });
     setTTS({ provider: "elevenlabs", api_key: "", model: "", voice: "", base_url: "" });
+    setShopeeCookie("");
+    setLlmTest(IDLE_TEST);
+    setTtsTest(IDLE_TEST);
+    setShopeeTest(IDLE_TEST);
     setSavedNote("Settings dihapus.");
     setTimeout(() => setSavedNote(null), 2500);
   }
 
+  async function handleTestLlm() {
+    if (!llm.api_key.trim()) {
+      setLlmTest({ loading: false, ok: false, message: "Isi API key dulu." });
+      return;
+    }
+    setLlmTest({ loading: true, ok: null, message: "Lagi tes…" });
+    try {
+      const r = await testLlm(llm);
+      setLlmTest({ loading: false, ok: r.ok, message: r.message });
+    } catch (e) {
+      setLlmTest({ loading: false, ok: false, message: String(e) });
+    }
+  }
+
+  async function handleTestTts() {
+    if (!tts.api_key.trim()) {
+      setTtsTest({ loading: false, ok: false, message: "Isi API key dulu." });
+      return;
+    }
+    setTtsTest({ loading: true, ok: null, message: "Lagi tes…" });
+    try {
+      const r = await testTts(tts);
+      setTtsTest({ loading: false, ok: r.ok, message: r.message });
+    } catch (e) {
+      setTtsTest({ loading: false, ok: false, message: String(e) });
+    }
+  }
+
+  async function handleTestShopee() {
+    setShopeeTest({ loading: true, ok: null, message: "Lagi tes…" });
+    try {
+      const r = await testShopee(
+        "https://shopee.co.id/product/15/100",
+        shopeeCookie,
+      );
+      setShopeeTest({ loading: false, ok: r.ok, message: r.message });
+    } catch (e) {
+      setShopeeTest({ loading: false, ok: false, message: String(e) });
+    }
+  }
+
   return (
     <div className="space-y-6">
+      <BackButton />
       <header className="space-y-2">
         <h1 className="text-3xl font-bold">Settings</h1>
         <p className="opacity-80 text-sm">
-          API key disimpan <b>hanya di browser</b> kamu (localStorage). Tidak
-          pernah dikirim ke server super-aff selain saat memang dibutuhkan untuk
-          panggil provider.
+          API key & cookie disimpan <b>hanya di browser</b> kamu (localStorage).
+          Tidak pernah dikirim ke server super-aff selain saat memang
+          dibutuhkan untuk panggil provider / Shopee.
         </p>
       </header>
 
       <section className="card space-y-4">
-        <h2 className="font-bold text-lg">LLM — untuk caption + hashtag + script</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold text-lg">LLM — caption + hashtag + script</h2>
+          <TestButton
+            state={llmTest}
+            onClick={handleTestLlm}
+            label="Test koneksi"
+          />
+        </div>
         <Field label="Provider">
           <select
             className="input"
             value={llm.provider}
-            onChange={(e) =>
-              setLLM({ ...llm, provider: e.target.value as LLMProvider })
-            }
+            onChange={(e) => {
+              setLLM({ ...llm, provider: e.target.value as LLMProvider });
+              setLlmTest(IDLE_TEST);
+            }}
           >
             {LLM_PROVIDERS.map((p) => (
               <option key={p.id} value={p.id}>
@@ -104,7 +185,10 @@ export default function SettingsPage() {
             className="input"
             value={llm.api_key}
             placeholder="sk-..."
-            onChange={(e) => setLLM({ ...llm, api_key: e.target.value })}
+            onChange={(e) => {
+              setLLM({ ...llm, api_key: e.target.value });
+              setLlmTest(IDLE_TEST);
+            }}
           />
         </Field>
         <Field label="Model (opsional)">
@@ -113,7 +197,10 @@ export default function SettingsPage() {
             className="input"
             value={llm.model || ""}
             placeholder="kosongin = pakai default"
-            onChange={(e) => setLLM({ ...llm, model: e.target.value })}
+            onChange={(e) => {
+              setLLM({ ...llm, model: e.target.value });
+              setLlmTest(IDLE_TEST);
+            }}
           />
         </Field>
         {llmCfg.needsBaseUrl && (
@@ -123,21 +210,32 @@ export default function SettingsPage() {
               className="input"
               value={llm.base_url || ""}
               placeholder="https://your-endpoint/v1"
-              onChange={(e) => setLLM({ ...llm, base_url: e.target.value })}
+              onChange={(e) => {
+                setLLM({ ...llm, base_url: e.target.value });
+                setLlmTest(IDLE_TEST);
+              }}
             />
           </Field>
         )}
       </section>
 
       <section className="card space-y-4">
-        <h2 className="font-bold text-lg">TTS — untuk voice-over MP3</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold text-lg">TTS — voice-over MP3</h2>
+          <TestButton
+            state={ttsTest}
+            onClick={handleTestTts}
+            label="Test suara"
+          />
+        </div>
         <Field label="Provider">
           <select
             className="input"
             value={tts.provider}
-            onChange={(e) =>
-              setTTS({ ...tts, provider: e.target.value as TTSProvider })
-            }
+            onChange={(e) => {
+              setTTS({ ...tts, provider: e.target.value as TTSProvider });
+              setTtsTest(IDLE_TEST);
+            }}
           >
             {TTS_PROVIDERS.map((p) => (
               <option key={p.id} value={p.id}>
@@ -152,7 +250,10 @@ export default function SettingsPage() {
             className="input"
             value={tts.api_key}
             placeholder="..."
-            onChange={(e) => setTTS({ ...tts, api_key: e.target.value })}
+            onChange={(e) => {
+              setTTS({ ...tts, api_key: e.target.value });
+              setTtsTest(IDLE_TEST);
+            }}
           />
         </Field>
         <Field label="Model (opsional)">
@@ -161,7 +262,10 @@ export default function SettingsPage() {
             className="input"
             value={tts.model || ""}
             placeholder="kosongin = pakai default"
-            onChange={(e) => setTTS({ ...tts, model: e.target.value })}
+            onChange={(e) => {
+              setTTS({ ...tts, model: e.target.value });
+              setTtsTest(IDLE_TEST);
+            }}
           />
         </Field>
         <Field label="Voice ID / nama (opsional)">
@@ -174,7 +278,10 @@ export default function SettingsPage() {
                 ? "voice ID, mis. 21m00Tcm4TlvDq8ikWAM"
                 : "alloy / Kore / dll"
             }
-            onChange={(e) => setTTS({ ...tts, voice: e.target.value })}
+            onChange={(e) => {
+              setTTS({ ...tts, voice: e.target.value });
+              setTtsTest(IDLE_TEST);
+            }}
           />
         </Field>
         {ttsCfg.needsBaseUrl && (
@@ -184,10 +291,63 @@ export default function SettingsPage() {
               className="input"
               value={tts.base_url || ""}
               placeholder="https://your-endpoint/v1"
-              onChange={(e) => setTTS({ ...tts, base_url: e.target.value })}
+              onChange={(e) => {
+                setTTS({ ...tts, base_url: e.target.value });
+                setTtsTest(IDLE_TEST);
+              }}
             />
           </Field>
         )}
+      </section>
+
+      <section className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold text-lg">Shopee Cookie (opsional, untuk anti-bot)</h2>
+          <TestButton
+            state={shopeeTest}
+            onClick={handleTestShopee}
+            label="Test cookie"
+          />
+        </div>
+        <p className="opacity-80 text-sm">
+          Shopee sering blokir scraping server-side. Tempelkan cookie dari
+          browser kamu yang sudah login Shopee untuk naikin tingkat
+          keberhasilan. Cara dapatnya:
+        </p>
+        <ol className="list-decimal pl-5 text-sm opacity-90 space-y-1">
+          <li>
+            Buka <b>shopee.co.id</b> di Chrome, login akun kamu.
+          </li>
+          <li>
+            Tekan <b>F12</b> → tab <b>Application</b> → <b>Storage</b> →{" "}
+            <b>Cookies</b> → klik <b>shopee.co.id</b>.
+          </li>
+          <li>
+            Copy semua cookie sebagai satu baris{" "}
+            <code className="opacity-80">nama=value; nama=value; ...</code>{" "}
+            (atau buka tab <b>Network</b> → request manapun ke shopee →
+            header <code>Cookie:</code>).
+          </li>
+          <li>
+            Paste di kotak bawah → Save → klik <b>Test cookie</b>.
+          </li>
+        </ol>
+        <Field label="Cookie">
+          <textarea
+            className="input font-mono text-xs"
+            rows={4}
+            value={shopeeCookie}
+            placeholder="SPC_EC=...; SPC_F=...; SPC_U=...; csrftoken=...; ..."
+            onChange={(e) => {
+              setShopeeCookie(e.target.value);
+              setShopeeTest(IDLE_TEST);
+            }}
+          />
+        </Field>
+        <p className="opacity-70 text-xs">
+          ⚠️ Cookie ini setara akses ke akun Shopee kamu. Jangan share. Kalau
+          mau revoke, ganti password Shopee → cookie lama auto-invalid.
+        </p>
       </section>
 
       <div className="flex items-center gap-3">
@@ -231,5 +391,45 @@ function Field({
       <span className="text-sm font-medium opacity-90">{label}</span>
       {children}
     </label>
+  );
+}
+
+function TestButton({
+  state,
+  onClick,
+  label,
+}: {
+  state: TestState;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={state.loading}
+        className="btn-ghost text-sm whitespace-nowrap"
+      >
+        {state.loading ? "Tes…" : label}
+      </button>
+      {state.ok === true && (
+        <span
+          className="text-xs px-2 py-0.5 rounded bg-green-500/15 text-green-700 dark:text-green-400"
+          title={state.message}
+        >
+          ✓ OK
+        </span>
+      )}
+      {state.ok === false && (
+        <span
+          className="text-xs px-2 py-0.5 rounded bg-red-500/15 text-red-700 dark:text-red-400 max-w-xs truncate"
+          title={state.message}
+        >
+          ✗ {state.message.slice(0, 60)}
+          {state.message.length > 60 ? "…" : ""}
+        </span>
+      )}
+    </div>
   );
 }

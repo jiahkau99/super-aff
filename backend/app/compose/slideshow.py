@@ -15,6 +15,7 @@ Returns the path to the generated MP4. The caller owns cleanup.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -122,6 +123,96 @@ def _audio_duration_sec(audio_path: Path) -> float | None:
     return None
 
 
+def _split_subtitle_segments(text: str) -> list[str]:
+    """Split a free-form script into short subtitle segments.
+
+    The voice-over text we get back from the LLM is one long paragraph;
+    burning it as a single block of text on screen looks awful and overlaps
+    products visually. We split on sentence terminators and newlines, then
+    further break long runs at commas / semicolons so each segment fits
+    comfortably on two lines of the on-screen overlay.
+    """
+
+    if not text or not text.strip():
+        return []
+    # Initial split on sentence boundaries + line breaks.
+    raw = re.split(r"(?<=[.!?])\s+|\n+", text.strip())
+    # Further break overlong sentences (>80 chars) at commas/semicolons.
+    out: list[str] = []
+    for chunk in raw:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if len(chunk) <= 80:
+            out.append(chunk)
+            continue
+        for sub in re.split(r"(?<=[,;])\s+", chunk):
+            sub = sub.strip()
+            if sub:
+                out.append(sub)
+    return out
+
+
+def _format_srt_timestamp(seconds: float) -> str:
+    """`HH:MM:SS,mmm` (SRT comma-separated milliseconds, not period)."""
+    if seconds < 0:
+        seconds = 0.0
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int(round((seconds - int(seconds)) * 1000))
+    # Propagate rounding carry up through s -> m -> h so we never emit
+    # invalid timestamps like "00:00:60,000" or "00:59:60,000" (libass
+    # silently skips those cues).
+    if ms == 1000:
+        s += 1
+        ms = 0
+    if s == 60:
+        m += 1
+        s = 0
+    if m == 60:
+        h += 1
+        m = 0
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _build_srt(
+    segments: Sequence[str], total_duration: float
+) -> str:
+    """Distribute segments across ``total_duration`` weighted by char count.
+
+    Char-weighting roughly matches speaking pace, so a one-word “Ya.” takes
+    much less screen time than a 60-character sentence. We don’t do real
+    forced alignment (Whisper) — that would be heavy and require an extra
+    model. Even distribution would be a regression for variable-length
+    sentences, so weighting is the cheap-but-decent middle ground.
+    """
+
+    if not segments or total_duration <= 0:
+        return ""
+    weights = [max(1, len(seg)) for seg in segments]
+    total_w = sum(weights)
+    out_lines: list[str] = []
+    cursor = 0.0
+    for i, seg in enumerate(segments):
+        share = total_duration * weights[i] / total_w
+        # Bound each segment between 1.0s (readable minimum) and 6.0s
+        # (TikTok-style fast pacing). The bounds may push us past
+        # total_duration on extreme inputs — ffmpeg simply truncates trailing
+        # subtitles past EOF, so this is safe.
+        share = min(6.0, max(1.0, share))
+        start = cursor
+        end = cursor + share
+        cursor = end
+        out_lines.append(str(i + 1))
+        out_lines.append(
+            f"{_format_srt_timestamp(start)} --> {_format_srt_timestamp(end)}"
+        )
+        out_lines.append(seg)
+        out_lines.append("")
+    return "\n".join(out_lines)
+
+
 def compose_slideshow(
     *,
     image_paths: Sequence[Path],
@@ -130,6 +221,7 @@ def compose_slideshow(
     target_resolution: tuple[int, int] = (720, 1280),
     duration_per_image: float = 3.0,
     watermark_text: str = "",
+    subtitle_text: str = "",
     fps: int = 30,
 ) -> Path:
     """Compose slideshow MP4. Returns out_path."""
@@ -174,6 +266,30 @@ def compose_slideshow(
             f"format=yuv420p"
         )
 
+        # 4b. Optional subtitle burn-in. We pass ffmpeg the SRT path as a
+        # *relative* filename and run with cwd=work, because the `subtitles`
+        # filter syntax interprets `:` as an option separator. Absolute
+        # Windows paths like `C:\foo` would be parsed as filter options. The
+        # font name needs to exist on the runtime machine; on the Tauri
+        # Windows bundle this resolves via libass’s default font
+        # configuration (it’ll fall back to Arial if DejaVu Sans Bold is not
+        # installed, which is fine).
+        if subtitle_text and subtitle_text.strip():
+            segments = _split_subtitle_segments(subtitle_text)
+            if segments:
+                srt = _build_srt(segments, audio_dur)
+                srt_path = work / "subs.srt"
+                srt_path.write_text(srt, encoding="utf-8")
+                style = (
+                    "FontName=DejaVu Sans Bold,FontSize=22,"
+                    "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                    "BorderStyle=1,Outline=2,Shadow=0,"
+                    "Alignment=2,MarginV=80"
+                )
+                # Escape commas in style block so they’re not treated as
+                # filter-graph separators.
+                vfilter += f",subtitles=subs.srt:force_style='{style}'"
+
         # 5. Run ffmpeg
         cmd: list[str] = [
             _ffmpeg_bin(),
@@ -203,7 +319,11 @@ def compose_slideshow(
             cmd += ["-an", "-t", f"{audio_dur:.3f}"]
         cmd += [str(out_path)]
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        # cwd=work so the `subtitles=subs.srt` filter resolves relative to
+        # the temp dir without leaking absolute paths into the filter graph.
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, cwd=str(work)
+        )
         if proc.returncode != 0:
             raise RuntimeError(
                 f"ffmpeg gagal (rc={proc.returncode}). stderr tail:\n{proc.stderr[-1500:]}"
