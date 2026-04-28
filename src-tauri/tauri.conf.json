@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.andelaiceee.superaff",
   "build": {
-    "beforeDevCommand": "pnpm --dir ../frontend dev",
-    "beforeBuildCommand": "pnpm --dir ../frontend build",
+    "beforeDevCommand": "pnpm --dir frontend dev",
+    "beforeBuildCommand": "pnpm --dir frontend build",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../frontend/out"
   },
