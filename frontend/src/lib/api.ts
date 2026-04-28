@@ -1,11 +1,39 @@
 // Centralised fetch helpers + types for super-aff backend.
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.trim().replace(/\/$/, "") || "/api";
+// Resolve the API base URL.
+//
+// Three runtime modes:
+//   1. Tauri desktop  : window.__TAURI_INTERNALS__ is present. The static
+//      export is served from `tauri.localhost`, but the FastAPI sidecar
+//      listens on 127.0.0.1:<TAURI_BACKEND_PORT> (default 8765). We MUST
+//      target the sidecar directly — relative `/api` paths would resolve
+//      against `tauri.localhost` and 404.
+//   2. Docker / Caddy : NEXT_PUBLIC_API_BASE unset → default to "/api"
+//      (same-origin reverse proxy).
+//   3. Local dev      : NEXT_PUBLIC_API_BASE=http://localhost:8000 — direct
+//      to FastAPI in `pnpm dev`.
+const TAURI_BACKEND_PORT = 8765;
+
+function resolveApiBase(): string {
+  if (typeof window !== "undefined") {
+    const w = window as unknown as {
+      __TAURI_INTERNALS__?: unknown;
+      __TAURI__?: unknown;
+    };
+    if (w.__TAURI_INTERNALS__ || w.__TAURI__) {
+      return `http://127.0.0.1:${TAURI_BACKEND_PORT}`;
+    }
+  }
+  return (
+    process.env.NEXT_PUBLIC_API_BASE?.trim().replace(/\/$/, "") || "/api"
+  );
+}
+
+export const API_BASE = resolveApiBase();
 
 // API_BASE may be either:
 //   - "/api"            : same-origin reverse proxy (docker compose default)
-//   - "http://...:8000" : direct to FastAPI in dev
+//   - "http://...:8000" : direct to FastAPI in dev / Tauri sidecar
 // Endpoint paths below already include the "/api/..." prefix from FastAPI
 // routers, so we only join with API_BASE if it does not already end with /api.
 function url(path: string): string {
@@ -181,13 +209,45 @@ export async function batchPlan(
   return r.json();
 }
 
+// Backend health probe — used by the Tauri splash to wait until uvicorn is
+// actually listening before unlocking the UI.
+export async function pingBackend(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const r = await fetch(url("/api/util/healthz"), { signal });
+    return r.ok;
+  } catch {
+    // Fall back to the legacy /healthz path which lives at the FastAPI root.
+    try {
+      const base = API_BASE.endsWith("/api")
+        ? API_BASE.slice(0, -4)
+        : API_BASE;
+      const r = await fetch(`${base}/healthz`, { signal });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 // ---- Browser helpers ------------------------------------------------------
 
+// Fetch a remote (possibly cross-origin) image and return it as base64.
+//
+// Browser-side fetching of e.g. Shopee CDN URLs hits CORS *and* the Tauri
+// CSP `connect-src` allowlist. Route through the backend, which has neither
+// constraint.
 export async function fetchAsBase64(imageUrl: string): Promise<string> {
-  const r = await fetch(imageUrl);
-  if (!r.ok) throw new Error(`Gagal download ${imageUrl}: HTTP ${r.status}`);
-  const buf = await r.arrayBuffer();
-  return arrayBufferToBase64(buf);
+  const r = await fetch(url("/api/util/fetch-image"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: imageUrl }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`Gagal download ${imageUrl}: HTTP ${r.status}: ${text}`);
+  }
+  const data = (await r.json()) as { image_b64: string };
+  return data.image_b64;
 }
 
 export function arrayBufferToBase64(buf: ArrayBuffer): string {

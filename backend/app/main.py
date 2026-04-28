@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import batch, compose, content, shopee, voiceover
+from app.routers import batch, compose, content, shopee, util, voiceover
 
 app = FastAPI(
     title="super-aff",
@@ -27,6 +27,7 @@ app.include_router(content.router)
 app.include_router(voiceover.router)
 app.include_router(compose.router)
 app.include_router(batch.router)
+app.include_router(util.router)
 
 
 @app.get("/healthz")

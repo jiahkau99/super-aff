@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { BackendReady } from "@/components/BackendReady";
 import { Navbar } from "@/components/Navbar";
 
 export const metadata: Metadata = {
@@ -14,8 +15,10 @@ export default function RootLayout({
   return (
     <html lang="id">
       <body className="min-h-screen antialiased">
-        <Navbar />
-        <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+        <BackendReady>
+          <Navbar />
+          <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+        </BackendReady>
       </body>
     </html>
   );
