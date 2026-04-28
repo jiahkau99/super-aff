@@ -35,3 +35,36 @@ def test_parse_other_domain():
     ids = parse_shopee_url("https://shopee.sg/product/1/2")
     assert ids is not None
     assert ids.domain == "shopee.sg"
+
+
+def test_parse_affiliate_path():
+    """Affiliate-style URL: /<slug>/<shop_id>/<item_id>."""
+    ids = parse_shopee_url("https://shopee.co.id/opaanlp/926472192/43171429168")
+    assert ids is not None
+    assert ids.shop_id == 926472192
+    assert ids.item_id == 43171429168
+
+
+def test_parse_affiliate_path_with_query():
+    ids = parse_shopee_url(
+        "https://shopee.co.id/myshop/12345/67890?utm_source=affiliate"
+    )
+    assert ids is not None
+    assert ids.shop_id == 12345
+    assert ids.item_id == 67890
+
+
+def test_affiliate_path_doesnt_match_homepage_handle():
+    # /buyer/account/profile shouldn't accidentally match — the second segment
+    # must be all digits.
+    assert parse_shopee_url("https://shopee.co.id/buyer/account/profile") is None
+
+
+def test_is_shortlink():
+    from app.shopee.scraper import is_shopee_shortlink
+
+    assert is_shopee_shortlink("https://s.shopee.co.id/3VgfWc4ajO") is True
+    assert is_shopee_shortlink("https://id.shp.ee/abcdef") is True
+    assert is_shopee_shortlink("https://shopee.co.id/r/AbCdEf") is True
+    assert is_shopee_shortlink("https://shopee.co.id/product/1/2") is False
+    assert is_shopee_shortlink("") is False

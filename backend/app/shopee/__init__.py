@@ -1,3 +1,13 @@
-from app.shopee.scraper import parse_shopee_url, scrape_shopee_product
+from app.shopee.scraper import (
+    is_shopee_shortlink,
+    parse_shopee_url,
+    resolve_shortlink,
+    scrape_shopee_product,
+)
 
-__all__ = ["parse_shopee_url", "scrape_shopee_product"]
+__all__ = [
+    "is_shopee_shortlink",
+    "parse_shopee_url",
+    "resolve_shortlink",
+    "scrape_shopee_product",
+]
