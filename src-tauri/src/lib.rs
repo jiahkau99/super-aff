@@ -70,7 +70,13 @@ pub fn run() {
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 let state: State<BackendChild> = app.state();
-                if let Some(child) = state.0.lock().unwrap().take() {
+                // Bind the take() result first so the MutexGuard is dropped at
+                // the end of THIS statement. Inlining it inside `if let Some`
+                // makes the guard live to the end of the if-let block on
+                // recent rustc, which collides with `state`'s lifetime
+                // (E0597: "state does not live long enough").
+                let child = state.0.lock().unwrap().take();
+                if let Some(child) = child {
                     let _ = child.kill();
                 }
             }
