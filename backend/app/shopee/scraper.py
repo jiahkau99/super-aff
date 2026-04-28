@@ -29,13 +29,6 @@ SHOPEE_DOMAINS = (
     "shopee.com.br",
 )
 
-# Short-link hosts that redirect to a canonical product URL.
-SHOPEE_SHORTLINK_HOSTS = (
-    "s.shopee.co.id",
-    "shopee.co.id/r/",  # not a host, but matches /r/ short slugs
-    "id.shp.ee",
-)
-
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -66,11 +59,31 @@ _AFFILIATE_PATH_RE = re.compile(r"/[A-Za-z][A-Za-z0-9_-]*/(\d{4,})/(\d{4,})(?:[/
 
 def is_shopee_shortlink(url: str) -> bool:
     """Return True if the URL is a known Shopee short-link that needs to be
-    resolved (HTTP redirect followed) before parsing."""
+    resolved (HTTP redirect followed) before parsing.
+
+    Patterns must be domain-qualified to avoid SSRF — a bare ``/r/`` substring
+    would otherwise match arbitrary user-controlled URLs (e.g. reddit.com/r/...)
+    and cause :func:`resolve_shortlink` to fetch them.
+    """
     s = url.strip().lower()
     if not s:
         return False
-    return any(h in s for h in ("s.shopee.", "id.shp.ee", "/r/"))
+    return any(
+        h in s
+        for h in (
+            "s.shopee.",
+            "id.shp.ee",
+            "shopee.co.id/r/",
+            "shopee.com/r/",
+            "shopee.sg/r/",
+            "shopee.ph/r/",
+            "shopee.com.my/r/",
+            "shopee.vn/r/",
+            "shopee.co.th/r/",
+            "shopee.tw/r/",
+            "shopee.com.br/r/",
+        )
+    )
 
 
 def parse_shopee_url(url: str) -> ShopeeIDs | None:
